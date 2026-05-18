@@ -1,0 +1,170 @@
+{
+  "defaults": {
+    "source": {
+      "type": "prometheus",
+      "prometheus": {
+        "url": "https://prometheus.your-company.com",
+        "step": "5m",
+        "username": "",
+        "password": "",
+        "disable_ssl": true
+      },
+      "time_range": {
+        "lookback_days": 90
+      }
+    },
+    "model": {
+      "strategy": "best_of",
+      "candidates": [
+        "walkforward/lightgbm",
+        "walkforward/ridge",
+        "linear_trend",
+        "seasonal_naive"
+      ],
+      "eval_metric": "rmse",
+      "eval_fraction": 0.2,
+      "refit_on_full_data": true
+    },
+    "forecast": {
+      "horizon_steps": 288,
+      "step": "5m"
+    },
+    "output": {
+      "clickhouse": {
+        "table": "metrics_forecast"
+      },
+      "console": true,
+      "save_eval": true
+    }
+  },
+  "metrics": [
+    {
+      "_comment": "Minimal metric — inherits everything from defaults above",
+      "service": "airflow-worker",
+      "metric": "memory_gb",
+      "source": {
+        "query": "sum(container_memory_working_set_bytes{container='airflow-worker', node='ndp-v01wnl-n19'})",
+        "preprocess": {
+          "scale": 1e-9
+        }
+      }
+    },
+    {
+      "_comment": "Single-model strategy instead of best_of",
+      "service": "api-gateway",
+      "metric": "rps",
+      "source": {
+        "query": "sum(rate(http_requests_total{service='api-gateway'}[1m]))"
+      },
+      "model": {
+        "strategy": "single",
+        "candidates": [
+          "walkforward/lightgbm"
+        ],
+        "eval_fraction": 0.15,
+        "refit_on_full_data": true
+      },
+      "forecast": {
+        "horizon_steps": 144,
+        "step": "5m"
+      }
+    },
+    {
+      "_comment": "Custom walkforward via dict form — fine-tune lags and estimator hyperparams",
+      "service": "batch-processor",
+      "metric": "queue_depth",
+      "source": {
+        "query": "rabbitmq_queue_messages{queue='main'}"
+      },
+      "model": {
+        "strategy": "best_of",
+        "candidates": [
+          {
+            "type": "walkforward",
+            "estimator": "lightgbm",
+            "params": {
+              "n_estimators": 300,
+              "num_leaves": 63,
+              "learning_rate": 0.05
+            },
+            "lags": [1, 2, 3, 6, 12, 24, 48],
+            "seasonal_lag": 288,
+            "seasonal_lag_min_len": 338
+          },
+          {
+            "type": "walkforward",
+            "estimator": "ridge",
+            "params": {
+              "alpha": 10.0
+            }
+          },
+          {
+            "type": "seasonal_naive",
+            "params": {
+              "period_steps": 288
+            }
+          },
+          {
+            "type": "naive_constant",
+            "params": {
+              "n": 20
+            }
+          }
+        ],
+        "eval_metric": "mae",
+        "eval_fraction": 0.2,
+        "refit_on_full_data": true
+      }
+    },
+    {
+      "_comment": "ClickHouse source with explicit time window instead of lookback_days",
+      "service": "db-replica",
+      "metric": "replication_lag_sec",
+      "source": {
+        "type": "clickhouse",
+        "clickhouse": {
+          "host": "clickhouse.internal",
+          "port": 8123,
+          "user": "reader",
+          "password": "",
+          "database": "metrics"
+        },
+        "query": "SELECT timestamp, value FROM replication_lag ORDER BY timestamp",
+        "time_range": {
+          "start": "2025-01-01T00:00:00Z",
+          "end": "2025-04-01T00:00:00Z"
+        }
+      },
+      "model": {
+        "strategy": "best_of",
+        "candidates": [
+          "linear_trend",
+          {
+            "type": "polynomial_trend",
+            "params": {
+              "degree": 2,
+              "alpha": 1.0
+            }
+          },
+          {
+            "type": "drift",
+            "params": {
+              "n": 60
+            }
+          }
+        ],
+        "eval_metric": "rmse",
+        "eval_fraction": 0.2,
+        "refit_on_full_data": false
+      },
+      "output": {
+        "clickhouse": {
+          "table": "metrics_forecast"
+        },
+        "console": false,
+        "save_eval": false
+      }
+    }
+  ],
+  "continue_on_error": true
+}

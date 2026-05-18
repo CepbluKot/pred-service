@@ -1,13 +1,17 @@
 """Тригерит pred_service DAG через Airflow REST API.
 
-Настрой CONFIG и запусти:
+Запуск с вшитым конфигом:
     python airflow/trigger_dag.py
+
+Запуск с конфигом из файла:
+    python airflow/trigger_dag.py airflow/config_example.json
 """
 import json
 import sys
 import urllib.request
 import urllib.error
 from base64 import b64encode
+from pathlib import Path
 
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -19,59 +23,78 @@ AIRFLOW_PASSWORD = "airflow"
 # ── PRED-SERVICE CONFIG ───────────────────────────────────────────────────────
 
 CONFIG = {
-    "time_range": {
-        "lookback_days": 300,
-    },
     "defaults": {
         "source": {
             "type": "prometheus",
             "prometheus": {
                 "url": "https://prometheus.your-company.com",
-                "username": "",
-                "password": "",
+                "step": "5m",
                 "disable_ssl": True,
             },
+            "time_range": {"lookback_days": 90},
         },
-        "step": "5m",
-        "predict_model": {
-            "name": "walkfwd_lightgbm",
-            "kwargs": {"auto_lags": True},
+        "model": {
+            "strategy": "best_of",
+            # Use string shorthand for default params, or dict form for full control.
+            # Dict form example (all keys optional — only override what you need):
+            #   {"type": "walkforward", "estimator": "lightgbm",
+            #    "params": {"n_estimators": 300},
+            #    "lags": [1, 2, 3, 6, 12, 24, 48], "seasonal_lag": 288}
+            #   {"type": "seasonal_naive", "params": {"period_steps": 144}}
+            #   {"type": "polynomial_trend", "params": {"degree": 3}}
+            #   {"type": "naive_constant", "params": {"n": 20}}
+            "candidates": [
+                "walkforward/lightgbm",
+                "walkforward/ridge",
+                "linear_trend",
+                "seasonal_naive",
+            ],
+            "eval_metric": "rmse",
+            "eval_fraction": 0.2,
+            "refit_on_full_data": True,   # refit winner on full series after evaluation
         },
         "forecast": {
-            "horizon_days": 1,
-            "overflow_condition": "gte",
-            "overflow_model": {"name": "linear_trend"},
-            "save_eval": True,
+            "horizon_steps": 288,
+            "step": "5m",
+        },
+        "output": {
+            "clickhouse": {"table": "metrics_forecast"},
+            "console": True,
+            "save_eval": True,  # write holdout eval rows to ClickHouse (kind="eval")
         },
     },
     "metrics": [
         {
             "service": "airflow-worker",
-            "metric_name": "mem",
+            "metric": "memory_gb",
             "source": {
                 "query": (
                     "sum(container_memory_working_set_bytes"
                     "{container='airflow-worker', node='ndp-v01wnl-n19'})"
                 ),
+                "preprocess": {"scale": 1e-9},
             },
-            "forecast": {
-                "resource_limit": 200,   # GiB (если value_mul=1e-9)
-            },
-            "preprocess": {"value_mul": 1e-9},
         },
     ],
-    "plots_dir": "/data/prediction_plots",
     "continue_on_error": True,
 }
 
 # ── RUN ───────────────────────────────────────────────────────────────────────
+
+def _load_config() -> dict:
+    if len(sys.argv) > 1:
+        path = Path(sys.argv[1])
+        print(f"Loading config from: {path}")
+        return json.loads(path.read_text())
+    return CONFIG
+
 
 def main() -> None:
     url = f"{AIRFLOW_URL.rstrip('/')}/api/v1/dags/pred_service/dagRuns"
 
     payload = {
         "conf": {
-            "config_json": json.dumps(CONFIG),
+            "config_json": json.dumps(_load_config()),
         }
     }
 
