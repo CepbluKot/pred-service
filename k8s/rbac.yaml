@@ -1,0 +1,44 @@
+---
+# ServiceAccount под которым запускаются Pod-ы pred-service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pred-service
+  namespace: airflow
+  labels:
+    app: pred-service
+
+---
+# Role: минимальные права для запуска Pod через KubernetesPodOperator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pred-service-pod-runner
+  namespace: airflow
+  labels:
+    app: pred-service
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding: даём права Airflow worker-у запускать Pod-ы
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pred-service-pod-runner
+  namespace: airflow
+  labels:
+    app: pred-service
+subjects:
+  - kind: ServiceAccount
+    name: airflow-worker        # ServiceAccount Airflow worker-а
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: pred-service-pod-runner
+  apiGroup: rbac.authorization.k8s.io
