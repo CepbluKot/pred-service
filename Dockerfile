@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim-bookworm
 
 # Системные зависимости для LightGBM и numpy
 RUN apt-get update && apt-get install -y --no-install-recommends \
