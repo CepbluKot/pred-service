@@ -1,0 +1,10 @@
+namespace: airflow
+
+storage:
+  className: nfs
+  data:
+    size: 10Gi
+
+rbac:
+  serviceAccountName: airflow-worker
+  airflowNamespace: airflow

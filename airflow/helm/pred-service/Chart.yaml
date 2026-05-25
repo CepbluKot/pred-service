@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pred-service
+description: Airflow + Kubernetes infrastructure for the pred-service forecasting pipeline
+type: application
+version: 0.1.0
+appVersion: "latest"
